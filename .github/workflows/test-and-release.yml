@@ -42,9 +42,7 @@ jobs:
 
       - name: Install MinGW (C compiler for CGO)
         if: runner.os == 'Windows'
-        run: |
-          choco install mingw --no-progress -y
-          echo "C:\ProgramData\mingw64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+        uses: egor-tensin/setup-mingw@v3
 
       - run: go vet ./...
       - run: go test ./...
@@ -91,9 +89,7 @@ jobs:
 
       - name: Install MinGW (C compiler for CGO)
         if: runner.os == 'Windows'
-        run: |
-          choco install mingw --no-progress -y
-          echo "C:\ProgramData\mingw64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+        uses: egor-tensin/setup-mingw@v3
 
       - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
         env:
