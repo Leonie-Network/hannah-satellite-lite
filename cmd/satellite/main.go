@@ -38,6 +38,7 @@ func main() {
 		log.Printf("TODO: play asset: %s", assetID)
 	}
 	audio.Muted = control.Muted
+	audio.Volume = control.Volume
 
 	subs := append(control.Subscriptions(), audio.Subscription())
 
@@ -46,6 +47,8 @@ func main() {
 		log.Fatalf("Failed to connect to MQTT: %v", err)
 	}
 	defer mqttClient.Disconnect(250)
+
+	audio.OnPlaybackDone = func() { control.PublishPlaybackDone(mqttClient) }
 
 	control.PublishState(mqttClient)
 

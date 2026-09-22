@@ -42,6 +42,25 @@ func (c *Control) Muted() bool {
 	return c.muted
 }
 
+// Volume returns the current volume 0-100 (e.g. for Audio.Volume).
+func (c *Control) Volume() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.volume
+}
+
+// PublishPlaybackDone signals Core that a playback has finished (e.g. via
+// Audio.OnPlaybackDone) — same topic/payload as the ESP firmware, not retained.
+func (c *Control) PublishPlaybackDone(client mqtt.Client) {
+	topic := c.topic("playback_done")
+	token := client.Publish(topic, 1, false, "{}")
+	go func() {
+		if token.Wait() && token.Error() != nil {
+			log.Printf("[Control] Publish failed (%s): %v", topic, token.Error())
+		}
+	}()
+}
+
 func (c *Control) topic(suffix string) string {
 	return fmt.Sprintf("hannah/satellite/%s/%s", c.SatelliteID, suffix)
 }
