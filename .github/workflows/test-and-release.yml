@@ -1,0 +1,102 @@
+name: Test and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  pull_request: {}
+
+permissions:
+  contents: read
+
+# Cancel previous PR/branch runs when a new commit is pushed
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+    env:
+      # CGO wird für malgo (Audio) und golang.design/x/hotkey (Keybindings) gebraucht.
+      CGO_ENABLED: 1
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install libX11 dev headers (golang.design/x/hotkey braucht Xlib.h + -lX11)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev
+
+      - name: Install MinGW (C-Compiler für CGO)
+        if: runner.os == 'Windows'
+        uses: egor-tensin/setup-mingw@v2
+
+      - run: go vet ./...
+      - run: go test ./...
+
+  # Baut ein Binary pro Matrix-Zeile nativ auf dem jeweiligen OS (kein CGO-Cross-Compile,
+  # das ist über Plattformgrenzen hinweg unzuverlässig) und hängt es an das GitHub-Release
+  # für den gepushten Tag an (softprops/action-gh-release legt das Release beim ersten
+  # Aufruf an und fügt beim nächsten nur weitere Dateien hinzu, die Matrix-Legs brauchen
+  # also keinen eigenen Merge-Job).
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            ext: ""
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            ext: ".exe"
+
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    env:
+      CGO_ENABLED: 1
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install libX11 dev headers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev
+
+      - name: Install MinGW (C-Compiler für CGO)
+        if: runner.os == 'Windows'
+        uses: egor-tensin/setup-mingw@v2
+
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -o hannah-satellite-lite-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./cmd/satellite
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: hannah-satellite-lite-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
