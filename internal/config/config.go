@@ -17,7 +17,7 @@ type Config struct {
 }
 
 type MQTTCfg struct {
-	// Hostname/IP des MQTT-Brokers, ohne Port — z.B. "192.0.2.1"
+	// Hostname/IP of the MQTT broker, without port — e.g. "192.0.2.1"
 	Address  string `json:"address"`
 	Port     int    `json:"port"`
 	Username string `json:"username"`
@@ -28,9 +28,9 @@ type SatelliteCfg struct {
 	SatelliteID string `json:"satellite_id"`
 }
 
-// KeybindingsCfg definiert optionale globale Tastenkombinationen als lokaler
-// Ersatz für die physischen Knöpfe der ESP-Satelliten (Mute, PTT, Lautstärke).
-// Format: "+"-getrennt, z.B. "ctrl+alt+m". Leerer Wert = Kombination deaktiviert.
+// KeybindingsCfg defines optional global hotkeys as a local stand-in for the
+// physical buttons on the ESP satellites (mute, PTT, volume). Format: "+"-separated,
+// e.g. "ctrl+alt+m". Empty value = binding disabled.
 type KeybindingsCfg struct {
 	Mute    string `json:"mute"`
 	PTT     string `json:"ptt"`
@@ -49,9 +49,9 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
 	case os.IsNotExist(err):
-		// Config-Datei ist optional, sofern genug per Env kommt (siehe applyEnvOverrides
-		// unten) — anders als bei einer vorhandenen, aber kaputten Datei ist das kein
-		// Nutzerfehler, sondern der Normalfall für rein env-basierte Deployments (Docker).
+		// The config file is optional as long as enough comes from env vars (see
+		// applyEnvOverrides below) — unlike an existing but broken file, this isn't
+		// a user error, it's the normal case for purely env-based deployments (Docker).
 	default:
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}

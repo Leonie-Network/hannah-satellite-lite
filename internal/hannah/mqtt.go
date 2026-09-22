@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"hannah-satellite-go/internal/config"
+	"hannah-satellite-lite/internal/config"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
@@ -31,16 +31,16 @@ func ConnectMQTT(ctx context.Context, cfg *config.MQTTCfg, satelliteID string, s
 	}
 
 	opts.SetOnConnectHandler(func(c mqtt.Client) {
-		log.Println("[MQTT] Verbunden. Richte Subscriptions ein...")
+		log.Println("[MQTT] Connected. Setting up subscriptions...")
 
 		for _, sub := range subs {
 			token := c.Subscribe(sub.Topic, sub.QoS, sub.Handler)
 
 			go func(t string) {
 				if token.Wait() && token.Error() != nil {
-					log.Printf("[MQTT] Fehler beim Abonnieren von %s: %v", t, token.Error())
+					log.Printf("[MQTT] Failed to subscribe to %s: %v", t, token.Error())
 				} else {
-					log.Printf("[MQTT] Topic erfolgreich abonniert: %s", t)
+					log.Printf("[MQTT] Subscribed to topic: %s", t)
 				}
 			}(sub.Topic)
 		}
@@ -58,21 +58,21 @@ func ConnectMQTT(ctx context.Context, cfg *config.MQTTCfg, satelliteID string, s
 		}
 	}()
 
-	// Warten auf Context-Abbruch ODER Verbindungs-Ergebnis
+	// Wait for context cancellation OR connection result
 	select {
 	case <-ctx.Done():
-		// Falls die Verbindung im Hintergrund doch noch klappt, direkt trennen
+		// If the connection succeeds in the background anyway, disconnect right away
 		go func() {
 			<-connectCh
 			if client.IsConnected() {
 				client.Disconnect(250)
 			}
 		}()
-		return nil, fmt.Errorf("MQTT-Verbindung abgebrochen: %w", ctx.Err())
+		return nil, fmt.Errorf("MQTT connection aborted: %w", ctx.Err())
 
 	case err := <-connectCh:
 		if err != nil {
-			return nil, fmt.Errorf("MQTT-Verbindungsfehler zu %s: %w", broker, err)
+			return nil, fmt.Errorf("MQTT connection error to %s: %w", broker, err)
 		}
 		return client, nil
 	}

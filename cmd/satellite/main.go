@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"hannah-satellite-go/internal/config"
-	"hannah-satellite-go/internal/hannah"
+	"hannah-satellite-lite/internal/config"
+	"hannah-satellite-lite/internal/hannah"
 )
 
 const volumeStep = 5
@@ -16,7 +16,7 @@ const volumeStep = 5
 func main() {
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
-		log.Fatalf("Fehler beim Laden der Konfiguration: %v", err)
+		log.Fatalf("Failed to load config: %v", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -24,18 +24,18 @@ func main() {
 
 	audio, err := hannah.NewAudio(cfg.Satellite.SatelliteID)
 	if err != nil {
-		log.Fatalf("Fehler beim Initialisieren der Audio-Geräte: %v", err)
+		log.Fatalf("Failed to initialize audio devices: %v", err)
 	}
 	defer audio.Close()
 
 	if err := audio.Start(ctx); err != nil {
-		log.Fatalf("Fehler beim Starten der Audio-Pipeline: %v", err)
+		log.Fatalf("Failed to start audio pipeline: %v", err)
 	}
 
 	control := hannah.NewControl(cfg.Satellite.SatelliteID)
 	control.OnListen = audio.StartListening
 	control.OnPlayAsset = func(assetID string) {
-		log.Printf("TODO: Asset abspielen: %s", assetID)
+		log.Printf("TODO: play asset: %s", assetID)
 	}
 	audio.Muted = control.Muted
 
@@ -43,7 +43,7 @@ func main() {
 
 	mqttClient, err := hannah.ConnectMQTT(ctx, &cfg.MQTT, cfg.Satellite.SatelliteID, subs)
 	if err != nil {
-		log.Fatalf("Fehler beim Verbinden mit MQTT: %v", err)
+		log.Fatalf("Failed to connect to MQTT: %v", err)
 	}
 	defer mqttClient.Disconnect(250)
 
@@ -60,5 +60,5 @@ func main() {
 	defer keys.Close()
 
 	<-ctx.Done()
-	log.Println("Beende...")
+	log.Println("Shutting down...")
 }

@@ -24,7 +24,7 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     env:
-      # CGO wird für malgo (Audio) und golang.design/x/hotkey (Keybindings) gebraucht.
+      # CGO is needed for malgo (audio) and golang.design/x/hotkey (keybindings).
       CGO_ENABLED: 1
 
     steps:
@@ -34,24 +34,26 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install libX11 dev headers (golang.design/x/hotkey braucht Xlib.h + -lX11)
+      - name: Install libX11 dev headers (golang.design/x/hotkey needs Xlib.h + -lX11)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libx11-dev
 
-      - name: Install MinGW (C-Compiler für CGO)
+      - name: Install MinGW (C compiler for CGO)
         if: runner.os == 'Windows'
-        uses: egor-tensin/setup-mingw@v2
+        run: |
+          choco install mingw --no-progress -y
+          echo "C:\ProgramData\mingw64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - run: go vet ./...
       - run: go test ./...
 
-  # Baut ein Binary pro Matrix-Zeile nativ auf dem jeweiligen OS (kein CGO-Cross-Compile,
-  # das ist über Plattformgrenzen hinweg unzuverlässig) und hängt es an das GitHub-Release
-  # für den gepushten Tag an (softprops/action-gh-release legt das Release beim ersten
-  # Aufruf an und fügt beim nächsten nur weitere Dateien hinzu, die Matrix-Legs brauchen
-  # also keinen eigenen Merge-Job).
+  # Builds one binary per matrix leg natively on its own OS (no CGO cross-compile,
+  # that's unreliable across platform boundaries) and attaches it to the GitHub
+  # Release for the pushed tag (softprops/action-gh-release creates the release on
+  # the first call and just adds more files on the next, so the matrix legs don't
+  # need a separate merge job).
   release:
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
@@ -87,9 +89,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libx11-dev
 
-      - name: Install MinGW (C-Compiler für CGO)
+      - name: Install MinGW (C compiler for CGO)
         if: runner.os == 'Windows'
-        uses: egor-tensin/setup-mingw@v2
+        run: |
+          choco install mingw --no-progress -y
+          echo "C:\ProgramData\mingw64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
         env:

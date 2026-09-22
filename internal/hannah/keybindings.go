@@ -7,11 +7,11 @@ import (
 
 	"golang.design/x/hotkey"
 
-	"hannah-satellite-go/internal/config"
+	"hannah-satellite-lite/internal/config"
 )
 
-// Keybindings registriert optionale globale Tastenkombinationen als lokalen
-// Ersatz für die physischen Knöpfe der ESP-Satelliten (Mute, PTT, Lautstärke).
+// Keybindings registers optional global hotkeys as a local stand-in for the
+// physical buttons on the ESP satellites (mute, PTT, volume).
 type Keybindings struct {
 	ToggleMute func()
 	PTTDown    func()
@@ -29,10 +29,9 @@ type keybinding struct {
 	up   func()
 }
 
-// Register registriert alle in cfg gesetzten Tastenkombinationen. Eine leere
-// Kombination wird übersprungen; scheitert eine einzelne Registrierung (z.B.
-// weil eine andere Anwendung sie bereits belegt), wird das geloggt, die
-// übrigen Kombinationen werden trotzdem registriert.
+// Register registers every binding set in cfg. An empty binding is skipped;
+// if a single registration fails (e.g. because another application already
+// holds it), that's logged and the remaining bindings are still registered.
 func (k *Keybindings) Register(cfg config.KeybindingsCfg) {
 	bindings := []keybinding{
 		{"mute", cfg.Mute, k.ToggleMute, nil},
@@ -48,13 +47,13 @@ func (k *Keybindings) Register(cfg config.KeybindingsCfg) {
 
 		mods, key, err := parseHotkey(b.spec)
 		if err != nil {
-			log.Printf("[Keybindings] %s (%q) ungültig: %v", b.name, b.spec, err)
+			log.Printf("[Keybindings] %s (%q) invalid: %v", b.name, b.spec, err)
 			continue
 		}
 
 		hk := hotkey.New(mods, key)
 		if err := hk.Register(); err != nil {
-			log.Printf("[Keybindings] %s (%s) konnte nicht registriert werden: %v", b.name, b.spec, err)
+			log.Printf("[Keybindings] %s (%s) could not be registered: %v", b.name, b.spec, err)
 			continue
 		}
 		k.registered = append(k.registered, hk)
@@ -78,7 +77,7 @@ func (k *Keybindings) Register(cfg config.KeybindingsCfg) {
 	}
 }
 
-// Close entfernt alle registrierten Tastenkombinationen.
+// Close removes all registered hotkeys.
 func (k *Keybindings) Close() {
 	for _, hk := range k.registered {
 		_ = hk.Unregister()
@@ -88,28 +87,29 @@ func (k *Keybindings) Close() {
 func parseHotkey(spec string) ([]hotkey.Modifier, hotkey.Key, error) {
 	parts := strings.Split(strings.ToLower(strings.TrimSpace(spec)), "+")
 	if len(parts) == 0 || parts[len(parts)-1] == "" {
-		return nil, 0, fmt.Errorf("leere Tastenkombination")
+		return nil, 0, fmt.Errorf("empty key combination")
 	}
 
 	var mods []hotkey.Modifier
 	for _, p := range parts[:len(parts)-1] {
 		mod, ok := modifiers[p]
 		if !ok {
-			return nil, 0, fmt.Errorf("unbekannter Modifier: %q", p)
+			return nil, 0, fmt.Errorf("unknown modifier: %q", p)
 		}
 		mods = append(mods, mod)
 	}
 
 	key, ok := keys[parts[len(parts)-1]]
 	if !ok {
-		return nil, 0, fmt.Errorf("unbekannte Taste: %q", parts[len(parts)-1])
+		return nil, 0, fmt.Errorf("unknown key: %q", parts[len(parts)-1])
 	}
 	return mods, key, nil
 }
 
-// Nur Ctrl/Shift — Alt und Win/Super sind auf Linux (X11) nicht eindeutig als
-// Modifier ansprechbar (dort gibt's nur rohe Mod1-Mod5), würden also den
-// Cross-Platform-Build brechen.
+// Ctrl/Shift only — Alt and Win/Super aren't addressable as a named modifier
+// on Linux (X11), which only has the raw Mod1-Mod5, so allowing them would
+// break the cross-platform build. "strg" is kept as a German alias for ctrl
+// for config-file convenience.
 var modifiers = map[string]hotkey.Modifier{
 	"ctrl":  hotkey.ModCtrl,
 	"strg":  hotkey.ModCtrl,

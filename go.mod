@@ -1,4 +1,4 @@
-module hannah-satellite-go
+module hannah-satellite-lite
 
 go 1.26.4
 

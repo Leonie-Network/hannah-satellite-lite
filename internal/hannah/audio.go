@@ -18,11 +18,12 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-// UDP-Protokoll (1-Byte Type-Prefix), 1:1 aus satellite-esp/components/hannah_net/hannah_net.c:
+// UDP protocol (1-byte type prefix), taken 1:1 from
+// satellite-esp/components/hannah_net/hannah_net.c:
 //
-//	0x01 + JSON = Control (beide Richtungen)
-//	0x02 + PCM  = Audio   (Satellit → Proxy)
-//	0x03 + PCM  = TTS     (Proxy → Satellit)
+//	0x01 + JSON = Control (both directions)
+//	0x02 + PCM  = Audio   (satellite → proxy)
+//	0x03 + PCM  = TTS     (proxy → satellite)
 const (
 	udpTypeControl byte = 0x01
 	udpTypeAudio   byte = 0x02
@@ -30,37 +31,37 @@ const (
 )
 
 const (
-	// Muss mit Hannah Core übereinstimmen (config.yaml: audio.sample_rate) —
-	// siehe hannah_audio Kconfig in satellite-esp, Default 16000.
+	// Must match Hannah Core (config.yaml: audio.sample_rate) — see the
+	// hannah_audio Kconfig in satellite-esp, default 16000.
 	sampleRate   = 16000
 	frameMS      = 30
 	frameSamples = sampleRate * frameMS / 1000 // 480
 	frameBytes   = frameSamples * 2            // 960 (16-bit mono)
 
-	// Lokaler UDP-Port für TTS/Status vom Proxy — Default aus satellite-esp
-	// (HANNAH_UDP_LISTEN_PORT), damit Core denselben Proxy-Registrierungsfluss
-	// für Lite- und ESP-Satelliten nutzen kann.
+	// Local UDP port for TTS/status from the proxy — default from satellite-esp
+	// (HANNAH_UDP_LISTEN_PORT), so Core can use the same proxy registration flow
+	// for Lite and ESP satellites.
 	udpListenPort = 7776
 
 	heartbeatInterval = 10 * time.Second
 
-	// Ersatz für die WebRTC-VAD der ESP-Firmware: einfache RMS-Schwelle mit
-	// Nachlaufzeit, um eine Sprechpause zu erkennen und audio_end zu senden.
-	// Für die Lite-Version bewusst simpel gehalten (weniger Funktionen).
+	// Stand-in for the ESP firmware's WebRTC VAD: a simple RMS threshold with
+	// hangover time to detect a pause in speech and send audio_end. Kept
+	// deliberately simple for the Lite version (fewer features).
 	silenceRMSThreshold = 400.0
 	silenceHangover     = 800 * time.Millisecond
 	maxListenDuration   = 15 * time.Second
 )
 
-// Audio kapselt Mikrofon-Aufnahme/Lautsprecher-Wiedergabe (malgo) und die
-// UDP-Verbindung zum Hannah-Proxy (Adresse kommt per "hannah/server" MQTT-
-// Broadcast, siehe Subscription).
+// Audio wraps microphone capture/speaker playback (malgo) and the UDP
+// connection to the Hannah proxy (address arrives via the "hannah/server" MQTT
+// broadcast, see Subscription).
 type Audio struct {
 	SatelliteID string
 
-	// Muted wird vor jedem Senden abgefragt (z.B. control.Muted) — bei true
-	// wird weiterhin aufgenommen (für die Stille-Erkennung), aber nichts an
-	// den Proxy geschickt.
+	// Muted is checked before every send (e.g. control.Muted) — when true,
+	// capture keeps running (for silence detection), but nothing is sent to
+	// the proxy.
 	Muted func() bool
 
 	malgoCtx *malgo.AllocatedContext
@@ -78,7 +79,7 @@ type Audio struct {
 	proxyAddr      *net.UDPAddr
 	ready          bool
 	listening      bool
-	manual         bool // true während StartPTT()/StopPTT() — kein Silence-/Timeout-Ende
+	manual         bool // true during StartPTT()/StopPTT() — no silence/timeout end
 	lastVoiceAt    time.Time
 	listenDeadline time.Time
 
@@ -89,10 +90,11 @@ type Audio struct {
 	playBuf []byte
 }
 
-// NewAudio initialisiert malgo-Context sowie Mikrofon- und Lautsprecher-Gerät
-// (16 kHz mono S16). Die Geräte laufen ab Start() durchgehend — das Mikrofon
-// wird nur bei aktivem StartListening()-Fenster tatsächlich an den Proxy
-// gesendet, genau wie bei der ESP-Firmware ist das Mikrofon technisch immer an.
+// NewAudio initializes the malgo context and the microphone/speaker devices
+// (16 kHz mono S16). The devices keep running once Start() is called — the
+// microphone is only actually sent to the proxy while a StartListening()
+// window is active, just like on the ESP firmware the mic is technically
+// always on.
 func NewAudio(satelliteID string) (*Audio, error) {
 	a := &Audio{SatelliteID: satelliteID}
 
@@ -100,7 +102,7 @@ func NewAudio(satelliteID string) (*Audio, error) {
 		log.Printf("[Audio/malgo] %s", strings.TrimSpace(message))
 	})
 	if err != nil {
-		return nil, fmt.Errorf("malgo-Context: %w", err)
+		return nil, fmt.Errorf("malgo context: %w", err)
 	}
 	a.malgoCtx = malgoCtx
 
@@ -108,7 +110,7 @@ func NewAudio(satelliteID string) (*Audio, error) {
 	if err != nil {
 		_ = malgoCtx.Uninit()
 		malgoCtx.Free()
-		return nil, fmt.Errorf("Mikrofon-Gerät: %w", err)
+		return nil, fmt.Errorf("microphone device: %w", err)
 	}
 	a.capture = capture
 
@@ -117,7 +119,7 @@ func NewAudio(satelliteID string) (*Audio, error) {
 		capture.Uninit()
 		_ = malgoCtx.Uninit()
 		malgoCtx.Free()
-		return nil, fmt.Errorf("Lautsprecher-Gerät: %w", err)
+		return nil, fmt.Errorf("speaker device: %w", err)
 	}
 	a.playback = playback
 
@@ -148,12 +150,12 @@ func (a *Audio) newPlaybackDevice() (*malgo.Device, error) {
 	})
 }
 
-// onCaptureStopped/onPlaybackStopped reagieren auf ein vom Betriebssystem
-// erzwungenes Geräte-Stopp (z.B. Windows wechselt das Standardgerät, USB-Gerät
-// wird kurz getrennt — WASAPI liefert dann AUDCLNT_E_DEVICE_INVALIDATED).
-// miniaudio stoppt das Gerät in diesem Fall sauber, initialisiert es aber
-// nicht automatisch neu — ohne diese Callbacks bliebe die Aufnahme/Wiedergabe
-// dauerhaft stumm, ohne dass der Prozess abstürzt oder sich meldet.
+// onCaptureStopped/onPlaybackStopped react to a device stop forced by the OS
+// (e.g. Windows switches the default device, a USB device is briefly
+// unplugged — WASAPI then returns AUDCLNT_E_DEVICE_INVALIDATED). miniaudio
+// stops the device cleanly in that case but doesn't reinitialize it
+// automatically — without these callbacks, capture/playback would stay
+// silent forever without the process crashing or saying anything.
 func (a *Audio) onCaptureStopped() {
 	a.deviceMu.Lock()
 	if a.closing || a.captureReiniting {
@@ -163,7 +165,7 @@ func (a *Audio) onCaptureStopped() {
 	a.captureReiniting = true
 	a.deviceMu.Unlock()
 
-	log.Println("[Audio] Mikrofon gestoppt (Geräte-/Standardwechsel?) — initialisiere neu...")
+	log.Println("[Audio] Microphone stopped (device/default change?) — reinitializing...")
 	go a.reinitCapture()
 }
 
@@ -176,7 +178,7 @@ func (a *Audio) onPlaybackStopped() {
 	a.playbackReiniting = true
 	a.deviceMu.Unlock()
 
-	log.Println("[Audio] Lautsprecher gestoppt (Geräte-/Standardwechsel?) — initialisiere neu...")
+	log.Println("[Audio] Speaker stopped (device/default change?) — reinitializing...")
 	go a.reinitPlayback()
 }
 
@@ -204,13 +206,13 @@ func (a *Audio) reinitCapture() {
 		dev, err := a.newCaptureDevice()
 		if err != nil {
 			a.deviceMu.Unlock()
-			log.Printf("[Audio] Mikrofon-Neuinitialisierung fehlgeschlagen (Versuch %d/%d): %v", attempt, deviceReinitAttempts, err)
+			log.Printf("[Audio] Microphone reinitialization failed (attempt %d/%d): %v", attempt, deviceReinitAttempts, err)
 			continue
 		}
 		if err := dev.Start(); err != nil {
 			dev.Uninit()
 			a.deviceMu.Unlock()
-			log.Printf("[Audio] Mikrofon-Start fehlgeschlagen (Versuch %d/%d): %v", attempt, deviceReinitAttempts, err)
+			log.Printf("[Audio] Microphone start failed (attempt %d/%d): %v", attempt, deviceReinitAttempts, err)
 			continue
 		}
 		a.capture = dev
@@ -219,11 +221,11 @@ func (a *Audio) reinitCapture() {
 		if old != nil {
 			old.Uninit()
 		}
-		log.Println("[Audio] Mikrofon erfolgreich neu initialisiert")
+		log.Println("[Audio] Microphone reinitialized successfully")
 		return
 	}
 
-	log.Println("[Audio] Mikrofon-Neuinitialisierung endgültig fehlgeschlagen — Aufnahme bleibt stumm bis Neustart")
+	log.Println("[Audio] Microphone reinitialization ultimately failed — capture stays silent until restart")
 }
 
 func (a *Audio) reinitPlayback() {
@@ -245,13 +247,13 @@ func (a *Audio) reinitPlayback() {
 		dev, err := a.newPlaybackDevice()
 		if err != nil {
 			a.deviceMu.Unlock()
-			log.Printf("[Audio] Lautsprecher-Neuinitialisierung fehlgeschlagen (Versuch %d/%d): %v", attempt, deviceReinitAttempts, err)
+			log.Printf("[Audio] Speaker reinitialization failed (attempt %d/%d): %v", attempt, deviceReinitAttempts, err)
 			continue
 		}
 		if err := dev.Start(); err != nil {
 			dev.Uninit()
 			a.deviceMu.Unlock()
-			log.Printf("[Audio] Lautsprecher-Start fehlgeschlagen (Versuch %d/%d): %v", attempt, deviceReinitAttempts, err)
+			log.Printf("[Audio] Speaker start failed (attempt %d/%d): %v", attempt, deviceReinitAttempts, err)
 			continue
 		}
 		a.playback = dev
@@ -260,37 +262,37 @@ func (a *Audio) reinitPlayback() {
 		if old != nil {
 			old.Uninit()
 		}
-		log.Println("[Audio] Lautsprecher erfolgreich neu initialisiert")
+		log.Println("[Audio] Speaker reinitialized successfully")
 		return
 	}
 
-	log.Println("[Audio] Lautsprecher-Neuinitialisierung endgültig fehlgeschlagen — Wiedergabe bleibt stumm bis Neustart")
+	log.Println("[Audio] Speaker reinitialization ultimately failed — playback stays silent until restart")
 }
 
-// Start bindet den UDP-Listen-Socket, startet Mikrofon/Lautsprecher und die
-// Hintergrund-Loops (Empfang, Heartbeat). Läuft bis ctx abgebrochen wird.
+// Start binds the UDP listen socket, starts the microphone/speaker, and the
+// background loops (receive, heartbeat). Runs until ctx is canceled.
 func (a *Audio) Start(ctx context.Context) error {
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: udpListenPort})
 	if err != nil {
-		return fmt.Errorf("UDP-Listen :%d: %w", udpListenPort, err)
+		return fmt.Errorf("UDP listen :%d: %w", udpListenPort, err)
 	}
 	a.conn = conn
 
 	if err := a.capture.Start(); err != nil {
-		return fmt.Errorf("Mikrofon starten: %w", err)
+		return fmt.Errorf("start microphone: %w", err)
 	}
 	if err := a.playback.Start(); err != nil {
-		return fmt.Errorf("Lautsprecher starten: %w", err)
+		return fmt.Errorf("start speaker: %w", err)
 	}
 
 	go a.receiveLoop(ctx)
 	go a.heartbeatLoop(ctx)
 
-	log.Printf("[Audio] bereit, UDP-Listen :%d", udpListenPort)
+	log.Printf("[Audio] ready, UDP listen :%d", udpListenPort)
 	return nil
 }
 
-// Close gibt Audio-Geräte und UDP-Socket frei.
+// Close releases the audio devices and the UDP socket.
 func (a *Audio) Close() {
 	a.deviceMu.Lock()
 	a.closing = true
@@ -312,15 +314,15 @@ func (a *Audio) Close() {
 	}
 }
 
-// Subscription liefert das MQTT-Topic, über das Core die Proxy-Adresse bekannt
-// gibt (Broadcast, kein Satelliten-Präfix).
+// Subscription returns the MQTT topic through which Core announces the proxy
+// address (broadcast, no satellite prefix).
 func (a *Audio) Subscription() TopicSubscription {
 	return TopicSubscription{Topic: "hannah/server", QoS: 0, Handler: a.handleServerBroadcast}
 }
 
-// StartListening öffnet ein Aufnahme-Fenster (z.B. via Control.OnListen) —
-// endet automatisch nach Sprechpause (silenceHangover) oder spätestens nach
-// maxListenDuration, und sendet dann audio_end.
+// StartListening opens a recording window (e.g. via Control.OnListen) — ends
+// automatically after a pause in speech (silenceHangover) or at the latest
+// after maxListenDuration, and sends audio_end at that point.
 func (a *Audio) StartListening() {
 	now := time.Now()
 	a.mu.Lock()
@@ -330,23 +332,23 @@ func (a *Audio) StartListening() {
 	a.listenDeadline = now.Add(maxListenDuration)
 	a.mu.Unlock()
 
-	log.Println("[Audio] Aufnahme gestartet")
+	log.Println("[Audio] Recording started")
 }
 
-// StartPTT beginnt eine manuell gesteuerte Aufnahme (Push-to-Talk, z.B. per
-// Tastenkombination als Ersatz für den physischen Knopf am ESP-Satelliten) —
-// anders als StartListening endet sie nicht automatisch durch Stille oder
-// Timeout, sondern erst durch StopPTT().
+// StartPTT begins a manually controlled recording (push-to-talk, e.g. via a
+// keybinding as a stand-in for the physical button on the ESP satellite) —
+// unlike StartListening it doesn't end automatically on silence or timeout,
+// only via StopPTT().
 func (a *Audio) StartPTT() {
 	a.mu.Lock()
 	a.listening = true
 	a.manual = true
 	a.mu.Unlock()
 
-	log.Println("[Audio] PTT: Aufnahme gestartet")
+	log.Println("[Audio] PTT: recording started")
 }
 
-// StopPTT beendet eine per StartPTT gestartete Aufnahme sofort.
+// StopPTT ends a recording started via StartPTT immediately.
 func (a *Audio) StopPTT() {
 	a.mu.Lock()
 	a.manual = false
@@ -364,11 +366,11 @@ func (a *Audio) stopListening() {
 	a.listening = false
 	a.mu.Unlock()
 
-	log.Println("[Audio] Aufnahme beendet")
+	log.Println("[Audio] Recording ended")
 	a.sendControl(map[string]any{"type": "audio_end", "device": a.SatelliteID})
 }
 
-/* ── Mikrofon → Proxy ────────────────────────────────────────────────────── */
+/* ── Microphone → proxy ──────────────────────────────────────────────────── */
 
 func (a *Audio) onCapture(_ []byte, input []byte, _ uint32) {
 	a.captureMu.Lock()
@@ -403,7 +405,7 @@ func (a *Audio) processFrame(frame []byte) {
 	}
 
 	if manual {
-		return // Ende nur über StopPTT(), nicht durch Stille/Timeout
+		return // ends only via StopPTT(), not by silence/timeout
 	}
 
 	a.mu.Lock()
@@ -429,7 +431,7 @@ func rmsInt16(frame []byte) float64 {
 	return math.Sqrt(sumSq / float64(n))
 }
 
-/* ── Proxy → Lautsprecher ────────────────────────────────────────────────── */
+/* ── Proxy → speaker ─────────────────────────────────────────────────────── */
 
 func (a *Audio) onPlayback(output []byte, _ []byte, _ uint32) {
 	a.playMu.Lock()
@@ -454,7 +456,7 @@ func (a *Audio) clearPlayback() {
 	a.playMu.Unlock()
 }
 
-/* ── UDP-Transport ───────────────────────────────────────────────────────── */
+/* ── UDP transport ───────────────────────────────────────────────────────── */
 
 func (a *Audio) receiveLoop(ctx context.Context) {
 	buf := make([]byte, 65536)
@@ -496,18 +498,18 @@ func (a *Audio) handleControl(payload []byte) {
 	switch msg.Type {
 	case "stop":
 		a.clearPlayback()
-		log.Println("[Audio] TTS-Wiedergabe gestoppt (stop empfangen)")
+		log.Println("[Audio] TTS playback stopped (stop received)")
 	case "reregister":
-		// Proxy kennt uns nicht (mehr) — z.B. nach Proxy-Neustart, in dessen
-		// In-Memory-Satelliten-Map wir dann fehlen. Ohne erneutes register
-		// bleiben wir dauerhaft unregistriert (Proxy beantwortet Heartbeats
-		// dann nur noch mit reregister statt heartbeat_ack).
-		log.Println("[Audio] Re-Registrierung angefordert")
+		// The proxy doesn't know us (anymore) — e.g. after a proxy restart, whose
+		// in-memory satellite map we're then missing from. Without a fresh
+		// register we'd stay unregistered forever (the proxy then only answers
+		// heartbeats with reregister instead of heartbeat_ack).
+		log.Println("[Audio] Reregistration requested")
 		a.sendRegister()
 	case "registered", "heartbeat_ack":
-		// Erwartete Bestätigungen vom Proxy, keine Aktion nötig.
+		// Expected acks from the proxy, no action needed.
 	case "pause", "resume":
-		log.Printf("[Audio] Control (noch nicht umgesetzt): %s", msg.Type)
+		log.Printf("[Audio] Control (not yet implemented): %s", msg.Type)
 	default:
 		log.Printf("[Audio] Control: %s", string(payload))
 	}
@@ -527,8 +529,8 @@ func (a *Audio) heartbeatLoop(ctx context.Context) {
 	}
 }
 
-// handleServerBroadcast reagiert auf "hannah/server" ({"host","port"}, mit
-// Fallback "host:port") und meldet den Satelliten beim Proxy an.
+// handleServerBroadcast reacts to "hannah/server" ({"host","port"}, with a
+// "host:port" fallback) and registers the satellite with the proxy.
 func (a *Audio) handleServerBroadcast(_ mqtt.Client, msg mqtt.Message) {
 	var payload struct {
 		Host string `json:"host"`
@@ -543,13 +545,13 @@ func (a *Audio) handleServerBroadcast(_ mqtt.Client, msg mqtt.Message) {
 		}
 	}
 	if payload.Host == "" || payload.Port == 0 {
-		log.Printf("[Audio] Ungültige hannah/server-Payload: %q", data)
+		log.Printf("[Audio] Invalid hannah/server payload: %q", data)
 		return
 	}
 
 	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", payload.Host, payload.Port))
 	if err != nil {
-		log.Printf("[Audio] Proxy-Adresse ungültig: %v", err)
+		log.Printf("[Audio] Invalid proxy address: %v", err)
 		return
 	}
 
@@ -594,6 +596,6 @@ func (a *Audio) send(packetType byte, payload []byte) {
 	pkt[0] = packetType
 	copy(pkt[1:], payload)
 	if _, err := a.conn.WriteToUDP(pkt, addr); err != nil {
-		log.Printf("[Audio] UDP-Send fehlgeschlagen: %v", err)
+		log.Printf("[Audio] UDP send failed: %v", err)
 	}
 }
