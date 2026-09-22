@@ -1,31 +1,52 @@
 package hannah
 
 import (
-	"config"
 	"context"
 	"fmt"
-	"time"
+	"log"
+
+	"hannah-satellite-go/internal/config"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-func ConnectMQTT(ctx context.Context, cfg *config.MQTTCfg) (mqtt.Client, error) {
+type TopicSubscription struct {
+	Topic   string
+	QoS     byte
+	Handler mqtt.MessageHandler
+}
+
+func ConnectMQTT(ctx context.Context, cfg *config.MQTTCfg, satelliteID string, subs []TopicSubscription) (mqtt.Client, error) {
+	broker := fmt.Sprintf("tcp://%s:%d", cfg.Address, cfg.Port)
 	opts := mqtt.NewClientOptions().
-		AddBroker(cfg.Address).
-		SetClientID("hannah-satellite-" + cfg.SatelliteID).
+		AddBroker(broker).
+		SetClientID("hannah-satellite-" + satelliteID).
 		SetAutoReconnect(true)
 
-	if cfg.username != "" {
-		opts.SetUsername(cfg.username)
+	if cfg.Username != "" {
+		opts.SetUsername(cfg.Username)
 	}
-	if cfg.password != "" {
-		opts.SetPassword(cfg.password)
+	if cfg.Password != "" {
+		opts.SetPassword(cfg.Password)
 	}
 
 	opts.SetOnConnectHandler(func(c mqtt.Client) {
-		// Logik für Re-Subscriptions hier platzieren (oder via Callback injizieren)
+		log.Println("[MQTT] Verbunden. Richte Subscriptions ein...")
+
+		for _, sub := range subs {
+			token := c.Subscribe(sub.Topic, sub.QoS, sub.Handler)
+
+			go func(t string) {
+				if token.Wait() && token.Error() != nil {
+					log.Printf("[MQTT] Fehler beim Abonnieren von %s: %v", t, token.Error())
+				} else {
+					log.Printf("[MQTT] Topic erfolgreich abonniert: %s", t)
+				}
+			}(sub.Topic)
+		}
 	})
 
+	client := mqtt.NewClient(opts)
 	connectCh := make(chan error, 1)
 
 	go func() {
@@ -51,7 +72,7 @@ func ConnectMQTT(ctx context.Context, cfg *config.MQTTCfg) (mqtt.Client, error) 
 
 	case err := <-connectCh:
 		if err != nil {
-			return nil, fmt.Errorf("MQTT-Verbindungsfehler zu %s: %w", cfg.Address, err)
+			return nil, fmt.Errorf("MQTT-Verbindungsfehler zu %s: %w", broker, err)
 		}
 		return client, nil
 	}

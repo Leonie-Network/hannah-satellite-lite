@@ -11,7 +11,7 @@ func TestLoadExampleConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.MQTT.Address != "192.168.1.1:50051" {
+	if cfg.MQTT.Address != "192.168.1.1" {
 		t.Errorf("mqtt.address mismatch: %q", cfg.MQTT.Address)
 	}
 }

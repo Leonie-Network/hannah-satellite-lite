@@ -11,20 +11,31 @@ import (
 )
 
 type Config struct {
-	MQTT MQTTCfg `json:"mqtt"`
-	Satellite SatelliteCfg `json:"satellite"`
+	MQTT        MQTTCfg        `json:"mqtt"`
+	Satellite   SatelliteCfg   `json:"satellite"`
+	Keybindings KeybindingsCfg `json:"keybindings"`
 }
 
 type MQTTCfg struct {
-	// gRPC address of Hannah Core, e.g. "192.0.2.1:50051"
-	Address string `json:"address"`
-	Port    int    `json:"port"`
-	username string `json:"username"`
-	password string `json:"password"`
+	// Hostname/IP des MQTT-Brokers, ohne Port — z.B. "192.0.2.1"
+	Address  string `json:"address"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 type SatelliteCfg struct {
 	SatelliteID string `json:"satellite_id"`
+}
+
+// KeybindingsCfg definiert optionale globale Tastenkombinationen als lokaler
+// Ersatz für die physischen Knöpfe der ESP-Satelliten (Mute, PTT, Lautstärke).
+// Format: "+"-getrennt, z.B. "ctrl+alt+m". Leerer Wert = Kombination deaktiviert.
+type KeybindingsCfg struct {
+	Mute    string `json:"mute"`
+	PTT     string `json:"ptt"`
+	VolUp   string `json:"vol_up"`
+	VolDown string `json:"vol_down"`
 }
 
 const envPrefix = "HANNAH_SATELLITE_"

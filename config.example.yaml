@@ -1,0 +1,15 @@
+mqtt:
+  address: 192.168.1.1
+  port: 1883
+  username: ""
+  password: ""
+
+satellite:
+  satellite_id: satellite-01
+
+# Optional — leer lassen um eine Kombination zu deaktivieren.
+keybindings:
+  mute: ctrl+shift+m
+  ptt: ctrl+shift+space
+  vol_up: ctrl+shift+up
+  vol_down: ctrl+shift+down
