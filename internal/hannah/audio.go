@@ -64,6 +64,14 @@ type Audio struct {
 	// the proxy.
 	Muted func() bool
 
+	// Volume returns the current playback volume 0-100 (e.g. control.Volume)
+	// — TTS samples are scaled linearly by it, like on the ESP firmware.
+	Volume func() int
+
+	// OnPlaybackDone is called once the playback buffer has run empty after a
+	// "tts_end" from the proxy (e.g. to publish .../playback_done).
+	OnPlaybackDone func()
+
 	malgoCtx *malgo.AllocatedContext
 
 	deviceMu          sync.Mutex
@@ -86,8 +94,9 @@ type Audio struct {
 	captureMu  sync.Mutex
 	captureBuf []byte
 
-	playMu  sync.Mutex
-	playBuf []byte
+	playMu      sync.Mutex
+	playBuf     []byte
+	playEndSeen bool // "tts_end" received, playback_done pending until playBuf drains
 }
 
 // NewAudio initializes the malgo context and the microphone/speaker devices
@@ -324,6 +333,11 @@ func (a *Audio) Subscription() TopicSubscription {
 // automatically after a pause in speech (silenceHangover) or at the latest
 // after maxListenDuration, and sends audio_end at that point.
 func (a *Audio) StartListening() {
+	if a.isMuted() {
+		log.Println("[Audio] Muted — recording not started")
+		return
+	}
+
 	now := time.Now()
 	a.mu.Lock()
 	a.listening = true
@@ -340,6 +354,11 @@ func (a *Audio) StartListening() {
 // unlike StartListening it doesn't end automatically on silence or timeout,
 // only via StopPTT().
 func (a *Audio) StartPTT() {
+	if a.isMuted() {
+		log.Println("[Audio] Muted — PTT recording not started")
+		return
+	}
+
 	a.mu.Lock()
 	a.listening = true
 	a.manual = true
@@ -400,7 +419,7 @@ func (a *Audio) processFrame(frame []byte) {
 		a.mu.Unlock()
 	}
 
-	if a.Muted == nil || !a.Muted() {
+	if !a.isMuted() {
 		a.sendAudio(frame)
 	}
 
@@ -416,6 +435,10 @@ func (a *Audio) processFrame(frame []byte) {
 	if silence || timeout {
 		a.stopListening()
 	}
+}
+
+func (a *Audio) isMuted() bool {
+	return a.Muted != nil && a.Muted()
 }
 
 func rmsInt16(frame []byte) float64 {
@@ -437,16 +460,55 @@ func (a *Audio) onPlayback(output []byte, _ []byte, _ uint32) {
 	a.playMu.Lock()
 	n := copy(output, a.playBuf)
 	a.playBuf = a.playBuf[n:]
+	done := a.playEndSeen && len(a.playBuf) == 0
+	if done {
+		a.playEndSeen = false
+	}
 	a.playMu.Unlock()
 
+	applyVolume(output[:n], a.volume())
 	for i := n; i < len(output); i++ {
 		output[i] = 0
+	}
+
+	// Not called inline — the malgo data callback must not block (MQTT publish).
+	if done && a.OnPlaybackDone != nil {
+		go a.OnPlaybackDone()
+	}
+}
+
+func (a *Audio) volume() int {
+	if a.Volume == nil {
+		return 100
+	}
+	return a.Volume()
+}
+
+// applyVolume scales 16-bit LE samples in place by vol (0-100).
+func applyVolume(pcm []byte, vol int) {
+	if vol >= 100 {
+		return
+	}
+	if vol < 0 {
+		vol = 0
+	}
+	for i := 0; i+1 < len(pcm); i += 2 {
+		s := int32(int16(binary.LittleEndian.Uint16(pcm[i:])))
+		binary.LittleEndian.PutUint16(pcm[i:], uint16(int16(s*int32(vol)/100)))
 	}
 }
 
 func (a *Audio) enqueuePlayback(pcm []byte) {
 	a.playMu.Lock()
 	a.playBuf = append(a.playBuf, pcm...)
+	a.playMu.Unlock()
+}
+
+// markPlaybackEnd arms playback_done — fired by onPlayback as soon as the
+// buffer has drained (immediately on the next callback if it already is).
+func (a *Audio) markPlaybackEnd() {
+	a.playMu.Lock()
+	a.playEndSeen = true
 	a.playMu.Unlock()
 }
 
@@ -496,6 +558,8 @@ func (a *Audio) handleControl(payload []byte) {
 	}
 
 	switch msg.Type {
+	case "tts_end":
+		a.markPlaybackEnd()
 	case "stop":
 		a.clearPlayback()
 		log.Println("[Audio] TTS playback stopped (stop received)")
