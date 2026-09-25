@@ -97,6 +97,7 @@ type Audio struct {
 	playMu      sync.Mutex
 	playBuf     []byte
 	playEndSeen bool // "tts_end" received, playback_done pending until playBuf drains
+	playing     bool // TTS response in progress (only used for start/done logging)
 }
 
 // NewAudio initializes the malgo context and the microphone/speaker devices
@@ -463,6 +464,7 @@ func (a *Audio) onPlayback(output []byte, _ []byte, _ uint32) {
 	done := a.playEndSeen && len(a.playBuf) == 0
 	if done {
 		a.playEndSeen = false
+		a.playing = false
 	}
 	a.playMu.Unlock()
 
@@ -472,8 +474,13 @@ func (a *Audio) onPlayback(output []byte, _ []byte, _ uint32) {
 	}
 
 	// Not called inline — the malgo data callback must not block (MQTT publish).
-	if done && a.OnPlaybackDone != nil {
-		go a.OnPlaybackDone()
+	if done {
+		go func() {
+			log.Println("[Audio] TTS playback done")
+			if a.OnPlaybackDone != nil {
+				a.OnPlaybackDone()
+			}
+		}()
 	}
 }
 
@@ -501,7 +508,13 @@ func applyVolume(pcm []byte, vol int) {
 func (a *Audio) enqueuePlayback(pcm []byte) {
 	a.playMu.Lock()
 	a.playBuf = append(a.playBuf, pcm...)
+	started := !a.playing
+	a.playing = true
 	a.playMu.Unlock()
+
+	if started {
+		log.Println("[Audio] TTS playback started")
+	}
 }
 
 // markPlaybackEnd arms playback_done — fired by onPlayback as soon as the
@@ -515,6 +528,7 @@ func (a *Audio) markPlaybackEnd() {
 func (a *Audio) clearPlayback() {
 	a.playMu.Lock()
 	a.playBuf = nil
+	a.playing = false
 	a.playMu.Unlock()
 }
 
